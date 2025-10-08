@@ -1,0 +1,233 @@
+AG Islas Salomón
+AN Nauru
+AY Papúa Nueva Guinea
+BG Groenlandia
+BI Islandia
+BK Kosovo
+C Canadá
+DA Argelia
+DB Benín
+DF Burkina Faso
+DG Ghana
+DI Costa de Marfil
+DN Nigeria
+DR Níger
+DT Túnez
+DX Togo
+EB Bélgica
+ED Alemania
+EE Estonia
+EF Finlandia
+EG Reino Unido
+EH Países Bajos
+EI República de Irlanda
+EK Dinamarca
+EL Luxemburgo
+EN Noruega
+EP Polonia
+ES Suecia
+ET Alemania (militar)
+EV Letonia
+EY Lituania
+FA Sudáfrica
+FB Botsuana
+FC República del Congo
+FD Suazilandia
+FE República Centroafricana
+FG Guinea Ecuatorial
+FH Isla Ascensión e Isla Saint Helena
+FI Mauricio
+FJ Territorio Británico en el Océano Índico
+FK Camerún
+FL Zambia
+FM Comoras, Madagascar, Mayotte, Reunión
+FN Angola
+FO Gabón
+FP San Tomé y Príncipe
+FQ Mozambique
+FS Islas Seychelles
+FT Chad
+FV Zimbabue
+FW Malaui
+FX Lesoto
+FY Namibia
+FZ República Democrática del Congo
+GA Malí
+GB Gambia
+GC Islas Canarias
+GE Ceuta y Melilla
+GF Sierra Leona
+GG Guinea-Bissau
+GL Liberia
+GM Marruecos
+GO Senegal
+GQ Mauritania
+GS Sáhara Occidental
+GU Guinea
+GV Cabo Verde
+HA Etiopía
+HB Burundi
+HC Somalia
+HD Yibuti
+HE Egipto
+HH Eritrea
+HK Kenia
+HL Libia
+HR Ruanda
+HS Sudán
+HT Tanzania
+HU Uganda
+K Estados Unidos
+LA Albania
+LB Bulgaria
+LC Chipre
+LD Croacia
+LE España
+LF Francia
+LG Grecia
+LH Hungría
+LI Italia
+LJ Eslovenia
+LK República Checa
+LL Israel
+LM Malta
+LN Mónaco
+LO Austria
+LP Portugal
+LQ Bosnia y Herzegovina
+LR Rumanía
+LS Suiza
+LT Turquía
+LU Moldavia
+LV Franja de Gaza
+LW Macedonia del Norte
+LX Gibraltar
+LY Serbia y Montenegro
+LZ Eslovaquia
+MB Islas Turcas y Caicos
+MD República Dominicana
+MG Guatemala
+MH Honduras
+MK Jamaica
+MM México
+MN Nicaragua
+MP Panamá
+MR Costa Rica
+MS El Salvador
+MT Haití
+MU Cuba
+MW Islas Caimán
+MY Bahamas
+MZ Belice
+NC Islas Cook
+NF Fiyi, Tonga
+NG Kiribati
+NI Niue
+NL Wallis y Futuna
+NS Samoa
+NT Polinesia Francesa
+NV Vanuatu
+NW Nueva Caledonia
+NZ Nueva Zelanda
+OA Afghanistán
+OB Baréin
+OE Arabia Saudita
+OI Irán
+OJ Jordania y Cisjordania
+OK Kuwait
+OL Líbano
+OM Emiratos Árabes Unidos
+OO Omán
+OP Pakistán
+OR Irak
+OS Siria
+OT Catar
+OY Yemen
+PA Alaska solamente
+PB Islas Baker
+PC Kiribati
+PF Fort Yukon, Alaska
+PG Guam, Islas Marianas del Norte
+PH Hawái solamente
+PJ Johnston Atoll
+PK Islas Marshall
+PL Kiribati
+PM Islas Midway
+PO Oliktok Long Range Radar Station, Alaska
+PP Point Lay, Alaska
+PT Estados Federados de Micronesia, Palaos
+PW Isla Wake
+RC Taiwán
+RJ Japón
+RK Corea del Sur
+RO Japón
+RP Filipinas
+SA Argentina
+SB Brasil
+SC Chile
+SD Brasil
+SE Ecuador
+SF Islas Malvinas
+SG Paraguay
+SK Colombia
+SL Bolivia
+SM Surinam
+SN Brasil
+SO Guayana Francesa
+SP Perú
+SS Brasil
+SU Uruguay
+SV Venezuela
+SW Brasil
+SY Guyana
+TA Antigua y Barbuda
+TB Barbados
+TD Dominica
+TF Guadalupe
+TG Granada
+TI Islas Vírgenes de los Estados Unidos
+TJ Puerto Rico
+TK San Cristóbal y Nieves
+TL Santa Lucía
+TN Antillas Neerlandesas, Aruba
+TQ Anguilla
+TR Montserrat
+TT Trinidad y Tobago
+TU Islas Vírgenes Británicas
+TV San Vicente y Granadinas
+TX Bermudas
+U Rusia
+UA Kazajistán, Kirguistán
+UB Azerbaiyán
+UG Armenia, Georgia
+UK Ucrania
+UM Bielorrusia
+UT Tayikistán
+VA India
+VC Sri Lanka
+VD Camboya
+VE India
+VG Bangladés
+VH Hong Kong
+VI India
+VL Laos
+VM Macao
+VN Nepal
+VO India
+VQ Bután
+VR Maldivas
+VT Tailandia
+VV Vietnam
+VY Birmania
+WA Indonesia
+WB Malasia
+WI Indonesia
+WM Malasia
+WP Timor Oriental
+WQ Indonesia
+WR Indonesia
+WS Singapur
+Y Australia
+Z República Popular China (excepto ZK y ZM)
+ZK Corea del Norte
+ZM Mongolia

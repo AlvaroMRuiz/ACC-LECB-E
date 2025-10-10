@@ -18,25 +18,15 @@ Script en **Python** que procesa un Excel con cruces del **ACC LECB E** para gen
 ## ⚙️ Ejecución básica
 
 \```bash
-python3 rutas_ACC_LECB_E.py \
-  --excel-path EntryList_Original_Crossing_ACC_LECBCTAE_0000_2400.xlsx \
-  --out rutas_lecbe.html
+python3 rutas_ACC_LECB_E.py EntryList_Original_Crossing_ACC_LECBCTAE_0000_2400.xlsx \
+  --origin-col Origin --dest-col Destination \
+  --out red_rutas.html \
+  --sector-config 1A \
+  --icao-prefixes icao_prefijos_pais_region.xlsx \
+  --world-geojson world_countries.geojson \
+  --plots-dir analitica \
+  --departures-excel FlightList_Original_Crossing_ACC_LECBCTAE_0000_2400.xlsx
 \```
-
----
-
-## 🔧 Argumentos relevantes
-
-| Flag | Descripción |
-|------|--------------|
-| `--excel-path` | Excel con las parejas origen/destino (**obligatorio**). |
-| `--out` | Ruta del HTML de salida. |
-| `--airports-csv` | Índice de aeropuertos (por defecto `iata-icao.csv`). |
-| `--sector-geojson` | Cache con la geometría oficial (`sector_lecbe.json`). |
-| `--route-samples` | Número de puntos para interpolar trayectorias geodésicas. |
-| `--plots-dir` | Carpeta donde guardar gráficos analíticos (**opcional**). |
-| `--region-threshold` | Umbral mínimo de vuelos por región en las gráficas. |
-| `--opensky-*` | Credenciales para recuperar tracks ADS-B (**opcional**). |
 
 ---
 

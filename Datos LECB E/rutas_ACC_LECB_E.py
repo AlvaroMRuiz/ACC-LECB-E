@@ -9,14 +9,15 @@ from pathlib import Path
 import argparse
 import math
 import json
-import time
 import copy
+import re
 from collections import Counter
-from datetime import datetime
+from datetime import datetime, timedelta
 from difflib import SequenceMatcher
 import unicodedata
 import urllib.parse
 import subprocess
+import numpy as np
 import pandas as pd
 import folium
 from folium.plugins import MarkerCluster
@@ -120,10 +121,96 @@ FLOW_BIN_SIZE_DEG = 7.5
 FLOW_CLUSTER_SUPPRESS_DEG = 15.0
 FLOW_MIN_COUNT = 10
 FLOW_WEIGHT_EXP = 1.35
-TMA_DEFINITIONS = [
-    {"icao": "LEBL", "name": "TMA Barcelona", "radius_nm": 45.0},
-    {"icao": "LEGE", "name": "TMA Girona", "radius_nm": 25.0},
-    {"icao": "LERS", "name": "TMA Reus", "radius_nm": 25.0},
+HOURLY_COLORS = {
+    "all": "#5e35b1",
+    "ascenso": "#2e7d32",
+    "descenso": "#c62828",
+    "sobrevuelo": "#1565c0",
+}
+TMA_POLYGONS = [
+    {
+        "name": "TMA Barcelona",
+        "icao": "LEBL",
+        "ats_unit": "Barcelona ACC",
+        "source": "ENAIRE AIP ENR 2.1 (04-SEP-2025)",
+        "coordinates": [
+            (42.433333, 3.166667),
+            (42.025556, 3.394167),
+            (41.9425, 3.389167),
+            (41.1125, 3.340556),
+            (40.673889, 2.963611),
+            (40.670278, 2.918056),
+            (40.636389, 2.486944),
+            (40.600556, 2.053333),
+            (40.567778, 1.673333),
+            (40.539444, 1.356389),
+            (40.741944, 0.719444),
+            (40.873611, 0.683056),
+            (41.253333, 0.576944),
+            (41.316389, 0.559444),
+            (41.605, 0.478333),
+            (41.677778, 0.4125),
+            (41.816389, 0.322778),
+            (41.893889, 0.278333),
+            (41.985556, 0.411944),
+            (42.071667, 0.535833),
+            (42.850278, 0.75),
+            (42.433333, 3.166667),
+        ],
+    },
+    {
+        "name": "TMA Valencia",
+        "icao": "LEVC",
+        "ats_unit": "Valencia TACC",
+        "source": "ENAIRE AIP ENR 2.1 (04-SEP-2025)",
+        "coordinates": [
+            (40.577778, 0.698611),
+            (40.231389, 0.698611),
+            (39.862306, 0.255222),
+            (39.7725, 0.147722),
+            (39.25, 0.483278),
+            (38.5, 0.483278),
+            (38.0, 0.166611),
+            (37.495972, -0.346139),
+            (37.963167, -0.275028),
+            (37.956667, -0.266944),
+            (38.000028, -0.320861),
+            (38.116667, -0.466667),
+            (38.116056, -1.092167),
+            (38.064472, -1.244528),
+            (37.946083, -1.571722),
+            (37.903472, -1.582694),
+            (38.206611, -2.018694),
+            (38.642917, -2.108861),
+            (39.043528, -1.441833),
+            (39.457417, -1.830556),
+            (39.539889, -1.745389),
+            (39.554722, -1.692556),
+            (39.566667, -1.65),
+            (40.0, -1.366667),
+            (40.000639, -1.009694),
+            (40.227222, -0.928833),
+            (40.233333, -0.413889),
+            (40.577778, -0.413889),
+            (40.577778, 0.698611),
+        ],
+    },
+    {
+        "name": "TMA Palma (RMZ)",
+        "icao": "LEPA",
+        "ats_unit": "Palma TACC",
+        "source": "ENAIRE AIP ENR 2.1 (04-SEP-2025)",
+        "coordinates": [
+            (40.5, 2.358333),
+            (40.5, 4.666667),
+            (39.716667, 4.666667),
+            (38.433333, 1.466667),
+            (38.608333, 1.116667),
+            (38.608333, 0.675),
+            (39.075, 0.675),
+            (40.5, 2.358333),
+        ],
+    },
 ]
 
 ICAO_REGION_COLORS = {
@@ -186,6 +273,67 @@ ICAO_REGION_LABELS = {
     "Y": "Australia",
     "Z": "China",
 }
+
+_PRIMARY_SECTOR_CONFIGS = {
+    "lecb_ruta_este_1a": {
+        "label": "Configuración 1A (ACC LECB Ruta Este)",
+        "dependencia": "BARCELONA RutaE",
+        "identifiers": {
+            "LECBCCL",
+            "LECBCCU",
+            "LECBMNL",
+            "LECBMNU",
+            "LECBMVS",
+            "LECBMMI",
+            "LECBVNI",
+            "LECBVMS",
+            "LECBVVI",
+        },
+        "volumes": {
+            "CCL": ["LECBCCL"],
+            "CCU": ["LECBCCU"],
+            "MNL": ["LECBMNL"],
+            "MNU": ["LECBMNU"],
+            "MSL": ["LECBMVS"],
+            "MSU": ["LECBMMI"],
+            "VNI": ["LECBVNI"],
+            "VSL": ["LECBVMS"],
+            "VSU": ["LECBVVI"],
+        },
+        "merge": False,
+        "boundary_color": "#f57c00",
+    },
+}
+
+_SECTOR_CONFIG_ALIASES = {
+    "1a": "lecb_ruta_este_1a",
+    "rutaeste1a": "lecb_ruta_este_1a",
+    "ruta_este_1a": "lecb_ruta_este_1a",
+    "lecb_1a": "lecb_ruta_este_1a",
+    "acc_lecb_1a": "lecb_ruta_este_1a",
+}
+
+
+def normalize_config_key(value: str | None) -> str | None:
+    if not value:
+        return None
+    key = re.sub(r"[^a-z0-9]+", "_", value.lower())
+    return key.strip("_")
+
+
+def resolve_sector_config(value):
+    key = normalize_config_key(value)
+    if not key:
+        return None
+    base_key = key
+    if key in _SECTOR_CONFIG_ALIASES:
+        base_key = _SECTOR_CONFIG_ALIASES[key]
+    config = _PRIMARY_SECTOR_CONFIGS.get(base_key)
+    if not config:
+        return None
+    result = dict(config)
+    result["key"] = base_key
+    return result
 
 
 def normalize_text(value: str) -> str:
@@ -510,15 +658,6 @@ def build_country_region_map_from_index(index, prefix_region_map, fallback_map=N
     return info
 
 
-OPENSKY_TRACK_URL = "https://opensky-network.org/api/tracks/all"
-
-
-def sanitize_callsign(callsign: str) -> str:
-    if not isinstance(callsign, str):
-        return ""
-    return "".join(ch for ch in callsign.upper().strip() if ch.isalnum())
-
-
 def combine_date_time(date_value, time_value):
     try:
         date_dt = pd.to_datetime(date_value).to_pydatetime()
@@ -541,74 +680,6 @@ def combine_date_time(date_value, time_value):
                 return None
         t = time_dt.time()
     return datetime.combine(date_dt.date(), t)
-
-
-def fetch_opensky_track(callsign: str, timestamp: int, auth, cache_dir: Path):
-    if not callsign or timestamp is None or not auth:
-        return None, False
-    sanitized = sanitize_callsign(callsign)
-    if not sanitized:
-        return None, False
-    cache_dir.mkdir(parents=True, exist_ok=True)
-    cache_file = cache_dir / f"{sanitized}_{int(timestamp)}.json"
-    if cache_file.exists():
-        try:
-            return json.loads(cache_file.read_text(encoding="utf-8")), True
-        except Exception:
-            pass
-    params = {"callsign": sanitized, "time": str(int(timestamp))}
-    try:
-        resp = requests.get(OPENSKY_TRACK_URL, params=params, auth=auth, timeout=30)
-        if resp.status_code == 200:
-            data = resp.json()
-            try:
-                cache_file.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
-            except Exception:
-                pass
-            return data, False
-        if resp.status_code != 404:
-            print(f"⚠️ OpenSky respondió {resp.status_code} para {sanitized}")
-    except Exception as exc:
-        print(f"⚠️ Error consultando OpenSky ({sanitized}): {exc}")
-    return None, False
-
-
-def extract_track_points(track_data, ref_timestamp: int, margin_seconds: int):
-    path = track_data.get("path") if isinstance(track_data, dict) else None
-    if not path:
-        return []
-    points = []
-    ref_ts = int(ref_timestamp) if ref_timestamp else None
-    for item in path:
-        lat = item.get("latitude")
-        lon = item.get("longitude")
-        if lat is None or lon is None:
-            continue
-        ts = item.get("time")
-        if ref_ts is not None and margin_seconds and ts is not None:
-            if abs(int(ts) - ref_ts) > margin_seconds:
-                continue
-        lat = float(lat)
-        lon = float(lon)
-        if points and abs(points[-1][0] - lat) <= 1e-5 and abs(points[-1][1] - lon) <= 1e-5:
-            continue
-        points.append((lat, lon))
-    if len(points) < 2:
-        points = []
-        for item in path:
-            lat = item.get("latitude")
-            lon = item.get("longitude")
-            if lat is None or lon is None:
-                continue
-            lat = float(lat)
-            lon = float(lon)
-            if points and abs(points[-1][0] - lat) <= 1e-5 and abs(points[-1][1] - lon) <= 1e-5:
-                continue
-            points.append((lat, lon))
-    if len(points) > 400:
-        step = len(points) // 400 + 1
-        points = points[::step] + [points[-1]]
-    return points
 
 
 def macro_region(code: str):
@@ -782,20 +853,116 @@ def cluster_flow_samples(samples, max_lines, bin_size_deg=FLOW_BIN_SIZE_DEG, sup
         avg_bearing_val = average_bearing([s["bearing"] for s in items])
         avg_length_nm = sum(s["length"] for s in items) / count
         spread = max((angular_distance_deg(s["bearing"], avg_bearing_val) for s in items), default=0.0)
+        origin_counts = Counter(
+            s["origin_macro"] for s in items if s.get("origin_macro") and s.get("origin_macro") != "Desconocido"
+        )
+        dest_counts = Counter(
+            s["dest_macro"] for s in items if s.get("dest_macro") and s.get("dest_macro") != "Desconocido"
+        )
         cluster_list.append({
             "count": count,
             "entry": (avg_entry_lat, avg_entry_lon),
             "bearing": avg_bearing_val,
             "length": avg_length_nm,
             "spread": spread,
+            "origin_macro_counts": origin_counts,
+            "dest_macro_counts": dest_counts,
         })
 
     cluster_list.sort(key=lambda item: item["count"], reverse=True)
     return cluster_list
 
 
+def summarize_macro_counts(counter, limit=3):
+    if not counter:
+        return "N/D"
+    parts = []
+    for name, cnt in counter.most_common(limit):
+        label = name or "Desconocido"
+        parts.append(f"{label} ({cnt})")
+    return ", ".join(parts)
+
+
 def _points_equal(a, b, tol=1e-6):
     return abs(a[0] - b[0]) <= tol and abs(a[1] - b[1]) <= tol
+
+
+def polygon_area_and_centroid(ring):
+    if len(ring) < 3:
+        return 0.0, (ring[0] if ring else (0.0, 0.0))
+    area2 = 0.0
+    cx = 0.0
+    cy = 0.0
+    for i in range(len(ring) - 1):
+        lat1, lon1 = ring[i]
+        lat2, lon2 = ring[i + 1]
+        x1, y1 = lon1, lat1
+        x2, y2 = lon2, lat2
+        cross = x1 * y2 - x2 * y1
+        area2 += cross
+        cx += (x1 + x2) * cross
+        cy += (y1 + y2) * cross
+    area = area2 / 2.0
+    if abs(area) < 1e-9:
+        lat_avg = sum(pt[0] for pt in ring) / len(ring)
+        lon_avg = sum(pt[1] for pt in ring) / len(ring)
+        return 0.0, (lat_avg, lon_avg)
+    cx = cx / (3.0 * area2)
+    cy = cy / (3.0 * area2)
+    return abs(area), (cy, cx)
+
+
+def compute_polygon_collection_centroid(polygons):
+    best_area = -1.0
+    best_centroid = None
+    for poly in polygons:
+        rings = poly.get("rings") if isinstance(poly, dict) else None
+        ring_list = rings or poly
+        if not ring_list:
+            continue
+        primary_ring = ring_list[0]
+        area, centroid = polygon_area_and_centroid(primary_ring)
+        if area > best_area:
+            best_area = area
+            best_centroid = centroid
+    return best_centroid
+
+
+def load_custom_geojson(path: Path):
+    if not path:
+        return []
+    path = Path(path)
+    if not path.exists():
+        return []
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except Exception as exc:
+        print(f"⚠️ No se pudo leer {path}: {exc}")
+        return []
+    features = []
+    if isinstance(data, dict) and data.get("type") == "FeatureCollection":
+        features = data.get("features") or []
+    elif isinstance(data, list):
+        features = data
+    else:
+        print(f"⚠️ Formato GeoJSON no reconocido en {path}")
+        return []
+    normalized = []
+    for feat in features:
+        if not isinstance(feat, dict):
+            continue
+        geom = feat.get("geometry")
+        props = feat.get("properties", {})
+        if not geom or not isinstance(geom, dict):
+            continue
+        gtype = geom.get("type")
+        if gtype not in {"Polygon", "MultiPolygon"}:
+            continue
+        coords = geom.get("coordinates")
+        if not coords:
+            continue
+        normalized.append({"type": "Feature", "geometry": {"type": gtype, "coordinates": coords}, "properties": props})
+    return normalized
 
 
 def segment_intersection(p1, p2, q1, q2):
@@ -890,49 +1057,13 @@ def ray_polygon_intersection(origin, target, polygons):
 
 
 def load_sector_polygons(cache_path: Path, refresh: bool = False):
-    def ring_area_centroid(ring):
-        if len(ring) < 3:
-            return 0.0, (ring[0] if ring else (0.0, 0.0))
-        area2 = 0.0
-        cx = 0.0
-        cy = 0.0
-        for i in range(len(ring) - 1):
-            lat1, lon1 = ring[i]
-            lat2, lon2 = ring[i + 1]
-            x1, y1 = lon1, lat1
-            x2, y2 = lon2, lat2
-            cross = x1 * y2 - x2 * y1
-            area2 += cross
-            cx += (x1 + x2) * cross
-            cy += (y1 + y2) * cross
-        area = area2 / 2.0
-        if abs(area) < 1e-9:
-            lat_avg = sum(pt[0] for pt in ring) / len(ring)
-            lon_avg = sum(pt[1] for pt in ring) / len(ring)
-            return 0.0, (lat_avg, lon_avg)
-        cx = cx / (3.0 * area2)
-        cy = cy / (3.0 * area2)
-        return abs(area), (cy, cx)
-
-    def compute_centroid(polygons):
-        best_area = -1.0
-        best_centroid = None
-        for poly in polygons:
-            if not poly.get("rings"):
-                continue
-            area, centroid = ring_area_centroid(poly["rings"][0])
-            if area > best_area:
-                best_area = area
-                best_centroid = centroid
-        return best_centroid
-
     def read_cache(path: Path):
         try:
             data = json.loads(path.read_text(encoding="utf-8"))
             polygons = data.get("polygons") or []
             centroid = data.get("centroid")
             if centroid is None and polygons:
-                centroid = compute_centroid(polygons)
+                centroid = compute_polygon_collection_centroid(polygons)
                 try:
                     data["centroid"] = centroid
                     path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -949,7 +1080,7 @@ def load_sector_polygons(cache_path: Path, refresh: bool = False):
 
     params = {
         "where": "DEPENDENCIA_CODE='BARCELONA RutaE'",
-        "outFields": "IDENT_TXT,NOMBRE_TXT",
+        "outFields": "*",
         "returnGeometry": "true",
         "outSR": 4326,
         "f": "pjson",
@@ -975,27 +1106,81 @@ def load_sector_polygons(cache_path: Path, refresh: bool = False):
         polygons, centroid = read_cache(cache_path)
         return polygons, centroid, True if polygons else False
 
+    def extract_config_label(attributes: dict):
+        if not attributes:
+            return None
+        prefer_keys = [
+            "CONFIGURACION",
+            "CONFIGURACION_TXT",
+            "CONFIGURATION",
+            "CONFIG_TXT",
+            "CONFIG_CODE",
+            "CONFIG_NOMBRE",
+        ]
+        for key in prefer_keys:
+            if key in attributes and attributes[key]:
+                return str(attributes[key]).strip()
+        for key, value in attributes.items():
+            if key and "CONFIG" in key.upper() and value:
+                return str(value).strip()
+        return None
+
     polygons = []
     for feat in payload.get("features", []):
         attrs = feat.get("attributes") or {}
         geom = feat.get("geometry") or {}
         rings = []
         for ring in geom.get("rings") or []:
-            converted = [(lat, lon) for lon, lat in ring if isinstance(lon, (int, float)) and isinstance(lat, (int, float))]
+            if not ring:
+                continue
+            converted = []
+            for coord in ring:
+                if not coord or len(coord) < 2:
+                    continue
+                lon, lat = coord[0], coord[1]
+                if not isinstance(lat, (int, float)) or not isinstance(lon, (int, float)):
+                    continue
+                converted.append((float(lat), float(lon)))
             if not converted:
                 continue
-            if converted[0] != converted[-1]:
+            if not _points_equal(converted[0], converted[-1]):
                 converted.append(converted[0])
             rings.append(converted)
-        if rings:
-            polygons.append({
-                "ident": attrs.get("IDENT_TXT"),
-                "name": attrs.get("NOMBRE_TXT"),
-                "rings": rings,
-            })
+        if not rings:
+            continue
+        ident = (
+            attrs.get("IDENT_TXT")
+            or attrs.get("IDENTIFICADOR")
+            or attrs.get("IDENT")
+            or attrs.get("IDENT_CODE")
+            or "N/A"
+        )
+        name = (
+            attrs.get("NOMBRE_TXT")
+            or attrs.get("NOMBRE")
+            or attrs.get("NAME")
+            or attrs.get("NOMBRE_SECTOR")
+            or ident
+        )
+        dependencia = (
+            attrs.get("DEPENDENCIA_CODE")
+            or attrs.get("DEPENDENCIA")
+            or attrs.get("DEPENDENCIA_TXT")
+        )
+        entry = {
+            "ident": str(ident).strip(),
+            "name": str(name).strip(),
+            "rings": rings,
+        }
+        config_label = extract_config_label(attrs)
+        if config_label:
+            entry["config"] = config_label
+        if dependencia:
+            entry["dependencia"] = str(dependencia).strip()
+        polygons.append(entry)
 
+    centroid = compute_polygon_collection_centroid(polygons)
     if polygons:
-        centroid = compute_centroid(polygons)
         try:
             cache_payload = {
                 "fetched": datetime.utcnow().isoformat(timespec="seconds") + "Z",
@@ -1007,7 +1192,7 @@ def load_sector_polygons(cache_path: Path, refresh: bool = False):
         except Exception:
             pass
 
-    return polygons, compute_centroid(polygons), False
+    return polygons, centroid, False
 
 
 def point_in_ring(lat: float, lon: float, ring):
@@ -1197,6 +1382,288 @@ def plot_altitude_types(df, outfile):
     plt.close()
 
 
+def expand_hour_slots(entry_dt, exit_dt):
+    if entry_dt is None or exit_dt is None:
+        return []
+    if exit_dt <= entry_dt:
+        exit_dt = exit_dt + timedelta(days=1)
+    effective_exit = exit_dt - timedelta(microseconds=1)
+    if effective_exit < entry_dt:
+        effective_exit = entry_dt
+    current = entry_dt.replace(minute=0, second=0, microsecond=0)
+    if current > entry_dt:
+        current -= timedelta(hours=1)
+    slots = []
+    safety = 0
+    while current <= effective_exit and safety < 72:
+        slots.append(current.hour % 24)
+        current += timedelta(hours=1)
+        safety += 1
+    return slots
+
+
+def plot_hourly_counts(counter, title, outfile, color="#5e35b1", y_max=None):
+    import matplotlib.pyplot as plt
+    hours = list(range(24))
+    values = [counter.get(h, 0) for h in hours]
+    if not any(values):
+        return
+    plt.figure(figsize=(11, 6))
+    bars = plt.bar(hours, values, color=color, edgecolor="black")
+    plt.title(title)
+    plt.xlabel("Hora del día")
+    plt.ylabel("Número de vuelos")
+    plt.xticks(hours, [f"{h:02d}:00" for h in hours], rotation=45, ha="right")
+    ylim_val = y_max if y_max is not None else max(values)
+    if ylim_val <= 0:
+        ylim_val = max(values) if values else 0
+    if ylim_val > 0:
+        plt.ylim(0, ylim_val)
+    for bar, value in zip(bars, values):
+        if value > 0:
+            y_text = bar.get_height() + 0.3
+            if ylim_val:
+                y_text = min(y_text, ylim_val * 0.98)
+            plt.text(bar.get_x() + bar.get_width() / 2, y_text, str(int(value)),
+                     ha="center", va="bottom", fontsize=9)
+    plt.tight_layout()
+    plt.savefig(outfile, dpi=160)
+    plt.close()
+
+
+def plot_hourly_stacked(hourly_by_category, title, outfile, colors):
+    import matplotlib.pyplot as plt
+    categories = list(ALTITUDE_CATEGORY_LABELS.keys())
+    hours = list(range(24))
+    stacks = {cat: [hourly_by_category.get(cat, Counter()).get(h, 0) for h in hours] for cat in categories}
+    if not any(sum(stacks[cat][i] for cat in categories) for i in range(len(hours))):
+        return
+    plt.figure(figsize=(11, 6))
+    bottom = [0] * len(hours)
+    for cat in categories:
+        values = stacks[cat]
+        if not any(values):
+            continue
+        bar_color = colors.get(cat, "#5e35b1")
+        label = ALTITUDE_CATEGORY_LABELS.get(cat, cat)
+        plt.bar(hours, values, bottom=bottom, color=bar_color, edgecolor="black", linewidth=0.5, label=label)
+        bottom = [b + v for b, v in zip(bottom, values)]
+    plt.title(title)
+    plt.xlabel("Hora del día")
+    plt.ylabel("Número de vuelos")
+    plt.xticks(hours, [f"{h:02d}:00" for h in hours], rotation=45, ha="right")
+    plt.legend(loc="upper right")
+    plt.tight_layout()
+    plt.savefig(outfile, dpi=160)
+    plt.close()
+
+
+def plot_hourly_delays(counter, title, outfile, color="#ef6c00"):
+    import matplotlib.pyplot as plt
+    hours = list(range(24))
+    values = [counter.get(h, 0) for h in hours]
+    if not any(values):
+        return
+    plt.figure(figsize=(11, 6))
+    bars = plt.bar(hours, values, color=color, edgecolor="black")
+    plt.title(title)
+    plt.xlabel("Hora del día")
+    plt.ylabel("Vuelos con retraso")
+    plt.xticks(hours, [f"{h:02d}:00" for h in hours], rotation=45, ha="right")
+    for bar, value in zip(bars, values):
+        if value > 0:
+            plt.text(bar.get_x() + bar.get_width() / 2, bar.get_height() + 0.3, str(int(value)), ha="center", va="bottom", fontsize=9)
+    plt.tight_layout()
+    plt.savefig(outfile, dpi=160)
+    plt.close()
+
+
+def plot_fl_hist(df, column, bins, outfile, color, title):
+    import matplotlib.pyplot as plt
+    values = pd.to_numeric(df.get(column), errors="coerce").dropna()
+    if values.empty:
+        return
+    plt.figure(figsize=(10, 6))
+    plt.hist(values, bins=bins, color=color, edgecolor="black", alpha=0.8)
+    plt.title(title)
+    plt.xlabel("Nivel de vuelo (FL)")
+    plt.ylabel("Número de vuelos")
+    plt.xticks(bins[::max(1, len(bins) // 12)])
+    plt.grid(axis="y", linestyle=":", alpha=0.4)
+    plt.tight_layout()
+    plt.savefig(outfile, dpi=160)
+    plt.close()
+
+
+def plot_fl_overlay(df, entry_col, exit_col, bins, outfile):
+    import matplotlib.pyplot as plt
+    entry = pd.to_numeric(df.get(entry_col), errors="coerce").dropna()
+    exit_ = pd.to_numeric(df.get(exit_col), errors="coerce").dropna()
+    if entry.empty and exit_.empty:
+        return
+    plt.figure(figsize=(10, 6))
+    counts_entry, bin_edges = np.histogram(entry, bins=bins)
+    counts_exit, _ = np.histogram(exit_, bins=bins)
+    centers = (bin_edges[:-1] + bin_edges[1:]) / 2
+    plt.step(centers, counts_entry, where="mid", label="Entrada", color="#1976d2")
+    plt.step(centers, counts_exit, where="mid", label="Salida", color="#c62828")
+    plt.fill_between(centers, counts_entry, step="mid", alpha=0.15, color="#1976d2")
+    plt.fill_between(centers, counts_exit, step="mid", alpha=0.15, color="#c62828")
+    plt.title("Distribución comparada de niveles de vuelo (Entrada/Salida)")
+    plt.xlabel("Nivel de vuelo (FL)")
+    plt.ylabel("Número de vuelos")
+    plt.xticks(bins[::max(1, len(bins) // 12)])
+    plt.grid(axis="y", linestyle=":", alpha=0.4)
+    plt.legend()
+    plt.tight_layout()
+    plt.savefig(outfile, dpi=160)
+    plt.close()
+
+
+def plot_fl_heatmap(df, entry_col, exit_col, bins, outfile):
+    import matplotlib.pyplot as plt
+    values = df[[entry_col, exit_col]].apply(pd.to_numeric, errors="coerce")
+    valid = values.dropna()
+    if valid.empty:
+        return
+    hist, xedges, yedges = np.histogram2d(valid[entry_col], valid[exit_col], bins=[bins, bins])
+    if not hist.any():
+        return
+    plt.figure(figsize=(8, 7))
+    mesh = plt.imshow(
+        hist.T,
+        origin="lower",
+        cmap="viridis",
+        extent=[xedges[0], xedges[-1], yedges[0], yedges[-1]],
+        aspect="auto",
+    )
+    plt.colorbar(mesh, label="Número de vuelos")
+    plt.title("Mapa de calor FL entrada vs salida")
+    plt.xlabel("FL entrada")
+    plt.ylabel("FL salida")
+    plt.xticks(bins[::max(1, len(bins) // 12)])
+    plt.yticks(bins[::max(1, len(bins) // 12)])
+    plt.tight_layout()
+    plt.savefig(outfile, dpi=160)
+    plt.close()
+
+
+def write_vertical_summary(df, bins, outfile):
+    if "Entry FL" not in df.columns or "Exit FL" not in df.columns:
+        return
+    work = df.copy()
+    work["Entry FL"] = pd.to_numeric(work["Entry FL"], errors="coerce")
+    work["Exit FL"] = pd.to_numeric(work["Exit FL"], errors="coerce")
+    work = work.dropna(subset=["Entry FL", "Exit FL"])
+    if work.empty:
+        return
+    work["Alt_Category"] = [
+        classify_altitude_change(row["Entry FL"], row["Exit FL"])[0] or "sobrevuelo"
+        for _, row in work.iterrows()
+    ]
+    work["Entry_bin"] = pd.cut(work["Entry FL"], bins=bins, right=False, include_lowest=True)
+    work["Exit_bin"] = pd.cut(work["Exit FL"], bins=bins, right=False, include_lowest=True)
+    interval_index = pd.IntervalIndex.from_breaks(bins, closed="left")
+    summary = pd.DataFrame({
+        "Entradas": work.groupby("Entry_bin", observed=False).size(),
+        "Salidas": work.groupby("Exit_bin", observed=False).size(),
+    }).reindex(interval_index, fill_value=0)
+    for cat_key, label in ALTITUDE_CATEGORY_LABELS.items():
+        cat_counts = (
+            work.loc[work["Alt_Category"] == cat_key]
+            .groupby("Entry_bin", observed=False)
+            .size()
+            .reindex(summary.index, fill_value=0)
+        )
+        summary[label] = cat_counts
+    summary = summary.fillna(0).astype(int).sort_index()
+    summary.index = summary.index.astype(str)
+    summary.reset_index(inplace=True)
+    summary.rename(columns={"index": "Rango FL"}, inplace=True)
+    outfile.parent.mkdir(parents=True, exist_ok=True)
+    summary.to_csv(outfile, index=False)
+
+
+def plot_hourly_line(counter, title, outfile, color="#5e35b1"):
+    import matplotlib.pyplot as plt
+    hours = list(range(24))
+    values = [counter.get(h, 0) for h in hours]
+    if not any(values):
+        return
+    plt.figure(figsize=(11, 6))
+    plt.plot(hours, values, marker="o", color=color, linewidth=2)
+    plt.title(title)
+    plt.xlabel("Hora del día")
+    plt.ylabel("Número de vuelos")
+    plt.xticks(hours, [f"{h:02d}:00" for h in hours], rotation=45, ha="right")
+    plt.grid(True, linestyle=":", alpha=0.4)
+    plt.tight_layout()
+    plt.savefig(outfile, dpi=160)
+    plt.close()
+
+
+def plot_duration_by_hour(df, outfile):
+    import matplotlib.pyplot as plt
+    if "Date" not in df.columns or "Entry time" not in df.columns or "Exit time" not in df.columns:
+        return
+    work = df.copy()
+    work["Entry_dt"] = work.apply(lambda row: combine_date_time(row.get("Date"), row.get("Entry time")), axis=1)
+    work["Exit_dt"] = work.apply(lambda row: combine_date_time(row.get("Date"), row.get("Exit time")), axis=1)
+    work = work.dropna(subset=["Entry_dt", "Exit_dt"])
+    if work.empty:
+        return
+    work["Duración_min"] = (work["Exit_dt"] - work["Entry_dt"]).dt.total_seconds() / 60
+    work = work[work["Duración_min"] > 0]
+    if work.empty:
+        return
+    work["Hora"] = work["Entry_dt"].dt.hour
+    grouped = work.groupby("Hora")["Duración_min"].agg(["count", "mean", "median"])
+    plt.figure(figsize=(11, 6))
+    plt.plot(grouped.index, grouped["mean"], marker="o", color="#00838f", label="Media (min)")
+    plt.plot(grouped.index, grouped["median"], marker="s", color="#c0ca33", label="Mediana (min)")
+    plt.title("Tiempo dentro del volumen por hora de entrada")
+    plt.xlabel("Hora de entrada")
+    plt.ylabel("Minutos dentro del volumen")
+    plt.xticks(range(24), [f"{h:02d}:00" for h in range(24)], rotation=45, ha="right")
+    plt.grid(True, linestyle=":", alpha=0.4)
+    plt.legend()
+    plt.tight_layout()
+    plt.savefig(outfile, dpi=160)
+    plt.close()
+    summary = grouped.reset_index()
+    summary.rename(columns={"Hora": "Hora_entrada", "count": "Vuelos", "mean": "Media_min", "median": "Mediana_min"}, inplace=True)
+    summary_path = Path(outfile).with_suffix(".csv")
+    summary_path.parent.mkdir(parents=True, exist_ok=True)
+    summary.to_csv(summary_path, index=False)
+
+
+def write_duration_summary(df, outfile):
+    if "Entry time" not in df.columns or "Exit time" not in df.columns:
+        return
+    work = df.copy()
+    work["Entry_dt"] = work.apply(lambda row: combine_date_time(row.get("Date"), row.get("Entry time")), axis=1)
+    work["Exit_dt"] = work.apply(lambda row: combine_date_time(row.get("Date"), row.get("Exit time")), axis=1)
+    work = work.dropna(subset=["Entry_dt", "Exit_dt"])
+    if work.empty:
+        return
+    work["Duración_min"] = (work["Exit_dt"] - work["Entry_dt"]).dt.total_seconds() / 60
+    work = work[work["Duración_min"] > 0]
+    if work.empty:
+        return
+    series = work["Duración_min"]
+    stats = {
+        "Vuelos": int(len(series)),
+        "Media_min": float(series.mean()),
+        "Mediana_min": float(series.median()),
+        "P95_min": float(series.quantile(0.95)),
+        "P99_min": float(series.quantile(0.99)),
+        "Min_min": float(series.min()),
+        "Max_min": float(series.max()),
+    }
+    df_out = pd.DataFrame([stats])
+    outfile.parent.mkdir(parents=True, exist_ok=True)
+    df_out.to_csv(outfile, index=False)
+
 def generate_insights(entry_df, departures_df, panel_counts, args, region_label_fn):
     if not args.plots_dir:
         return
@@ -1225,8 +1692,74 @@ def generate_insights(entry_df, departures_df, panel_counts, args, region_label_
     plot_hist_duration(entry_df, out_dir / "tiempo_en_sector.png")
     plot_altitude_types(entry_df, out_dir / "tipos_altitud.png")
 
+    hourly_all = Counter()
+    hourly_by_category = {key: Counter() for key in ALTITUDE_CATEGORY_LABELS}
+    for _, row in entry_df.iterrows():
+        entry_dt = combine_date_time(row.get("Date"), row.get("Entry time"))
+        exit_dt = combine_date_time(row.get("Date"), row.get("Exit time"))
+        if entry_dt is None or exit_dt is None:
+            continue
+        slots = expand_hour_slots(entry_dt, exit_dt)
+        if not slots:
+            continue
+        category_key, _ = classify_altitude_change(row.get("Entry FL"), row.get("Exit FL"))
+        if not category_key or category_key not in ALTITUDE_CATEGORY_LABELS:
+            category_key = "sobrevuelo"
+        for slot in slots:
+            hourly_all[slot] += 1
+            hourly_by_category.setdefault(category_key, Counter())[slot] += 1
+
+    global_max = max(
+        [max(hourly_all.values()) if hourly_all else 0] +
+        [max(counter.values()) if counter else 0 for counter in hourly_by_category.values()]
+    )
+    if global_max <= 0:
+        global_max = None
+
+    plot_hourly_stacked(hourly_by_category, "Vuelos por hora (apilado por perfil)", out_dir / "horas_todos.png", HOURLY_COLORS)
+    for key, label in ALTITUDE_CATEGORY_LABELS.items():
+        plot_hourly_counts(hourly_by_category.get(key, Counter()), f"Vuelos por hora - {label}", out_dir / f"horas_{key}.png", HOURLY_COLORS.get(key, "#5e35b1"), y_max=global_max)
+    plot_hourly_line(hourly_all, "Evolución diaria de entradas en el volumen", out_dir / "horas_todos_linea.png", HOURLY_COLORS["all"])
+    plot_duration_by_hour(entry_df, out_dir / "duracion_por_hora.png")
+    write_duration_summary(entry_df, out_dir / "duracion_resumen.csv")
+
+    if {"Entry FL", "Exit FL"}.issubset(entry_df.columns):
+        fl_values = pd.concat(
+            [
+                pd.to_numeric(entry_df["Entry FL"], errors="coerce"),
+                pd.to_numeric(entry_df["Exit FL"], errors="coerce"),
+            ]
+        ).dropna()
+        if not fl_values.empty:
+            max_fl = int(math.ceil(fl_values.max() / 10.0) * 10)
+            if max_fl < 100:
+                max_fl = 100
+            bins = np.arange(0, max_fl + 10, 10)
+            plot_fl_hist(entry_df, "Entry FL", bins, out_dir / "fl_entry_hist.png", "#1976d2", "Distribución FL entrada")
+            plot_fl_hist(entry_df, "Exit FL", bins, out_dir / "fl_exit_hist.png", "#c62828", "Distribución FL salida")
+            plot_fl_overlay(entry_df, "Entry FL", "Exit FL", bins, out_dir / "fl_entry_exit_overlay.png")
+            plot_fl_heatmap(entry_df, "Entry FL", "Exit FL", bins, out_dir / "fl_entry_exit_heatmap.png")
+            write_vertical_summary(entry_df, bins, out_dir / "fl_resumen.csv")
+
     outfile_panel = out_dir / "panel_regiones.csv"
     pd.Series(panel_counts).to_csv(outfile_panel, header=["Vuelos"], index_label="Región")
+
+    delay_counter = Counter()
+    delay_columns = [col for col in entry_df.columns if "delay" in col.lower()]
+    for _, row in entry_df.iterrows():
+        delay_value = None
+        for col in delay_columns:
+            delay_value = to_float(row.get(col))
+            if delay_value is not None:
+                break
+        if delay_value is None or delay_value <= 0:
+            continue
+        entry_dt = combine_date_time(row.get("Date"), row.get("Entry time"))
+        if entry_dt is None:
+            continue
+        delay_counter[entry_dt.hour % 24] += 1
+    if delay_counter:
+        plot_hourly_delays(delay_counter, "Vuelos con retraso por hora", out_dir / "retrasos_por_hora.png")
 
 def norm_code(x):
     if pd.isna(x): return None
@@ -1280,6 +1813,7 @@ def main():
     parser.add_argument("--out", type=str, default="red_rutas.html", help="Archivo HTML de salida")
     parser.add_argument("--airports-csv", type=str, default="iata-icao.csv", help="Ruta al CSV con aeropuertos (IATA/ICAO)")
     parser.add_argument("--sector-geojson", type=str, default=str(SECTOR_CACHE_PATH), help="Cache local de la geometría LECB E")
+    parser.add_argument("--sector-config", type=str, default=None, help="Configuración sectorial a visualizar (ej. '1A')")
     parser.add_argument("--refresh-sector", action="store_true", help="Forzar descarga de la geometría LECB E desde ENAIRE")
     parser.add_argument("--sector-center-lat", type=float, default=41.3, help="Latitud aproximada del centro del sector (respaldo)")
     parser.add_argument("--sector-center-lon", type=float, default=2.3, help="Longitud aproximada del centro del sector (respaldo)")
@@ -1289,15 +1823,15 @@ def main():
     parser.add_argument("--departures-excel", type=str, default=None, help="Excel adicional con vuelos de salida (para estadísticas)")
     parser.add_argument("--plots-dir", type=str, default=None, help="Directorio donde guardar gráficos analíticos opcionales")
     parser.add_argument("--region-threshold", type=int, default=10, help="Umbral mínimo de vuelos por región en los gráficos")
-    parser.add_argument("--opensky-user", type=str, default=None, help="Usuario de OpenSky Network para recuperar trayectorias ADS-B")
-    parser.add_argument("--opensky-password", type=str, default=None, help="Contraseña de OpenSky Network")
-    parser.add_argument("--tracks-dir", type=str, default="opensky_tracks", help="Directorio de cache para pistas OpenSky")
-    parser.add_argument("--track-margin-minutes", type=int, default=30, help="Margen en minutos alrededor de la hora de entrada para filtrar puntos de la trayectoria")
     parser.add_argument("--world-geojson", type=str, default=str(WORLD_GEOJSON_PATH), help="GeoJSON mundial para colorear regiones")
     parser.add_argument("--icao-prefixes", type=str, default=str(ICAO_PREFIXES_PATH), help="Tabla Excel con prefijos ICAO y regiones")
+    parser.add_argument("--tma-geojson", type=str, default=None, help="GeoJSON con límites TMA a representar")
 
     args = parser.parse_args()
     print(f"Archivo Excel proporcionado: {args.excel_path}")
+    config_info = resolve_sector_config(args.sector_config)
+    if args.sector_config and not config_info:
+        print(f"⚠️ Configuración sectorial no reconocida: {args.sector_config}")
 
     excel = Path(args.excel_path)
     if not excel.exists():
@@ -1322,13 +1856,43 @@ def main():
     route_geojson_features = []
     category_geojson_features = {key: [] for key in ALTITUDE_CATEGORY_LABELS}
     flow_samples = {key: [] for key in ["all", *ALTITUDE_CATEGORY_LABELS.keys()]}
+    sector_alias_labels = {}
 
     sector_cache_path = Path(args.sector_geojson)
     sector_raw, sector_centroid, sector_from_cache = load_sector_polygons(sector_cache_path, refresh=args.refresh_sector)
+    if config_info:
+        volume_map = config_info.get("volumes") or {}
+        if volume_map:
+            allowed = set()
+            for display_ident, actual_ids in volume_map.items():
+                for actual_id in actual_ids:
+                    allowed.add(actual_id)
+                    sector_alias_labels[actual_id] = display_ident
+        else:
+            allowed = set(config_info.get("identifiers") or [])
+        existing_ids = {poly.get("ident") for poly in sector_raw}
+        expanded_allowed = set()
+        missing = []
+        for ident in allowed:
+            if ident in existing_ids:
+                expanded_allowed.add(ident)
+            else:
+                missing.append(ident)
+        if missing:
+            print(f"⚠️ No se encontraron los polígonos esperados: {', '.join(sorted(missing))}")
+        filtered = [poly for poly in sector_raw if poly.get("ident") in expanded_allowed] if expanded_allowed else []
+        if filtered:
+            sector_raw = filtered
+            sector_centroid = compute_polygon_collection_centroid(sector_raw) or sector_centroid
+        else:
+            print(f"⚠️ No se encontraron polígonos para la configuración solicitada ({config_info['label']}).")
     sector_polygons = [poly["rings"] for poly in sector_raw]
     if sector_polygons:
         origin_sector_msg = "cache local" if sector_from_cache else "servicio ENAIRE"
         print(f"Geometría LECB E cargada ({origin_sector_msg}): {len(sector_polygons)} polígonos")
+        if config_info and config_info.get("identifiers"):
+            listed = ", ".join(sorted(sector_alias_labels.get(poly.get("ident"), poly.get("ident") or "N/A") for poly in sector_raw))
+            print(f"Configuración aplicada: {config_info['label']} ({listed})")
     else:
         print("⚠️ No se pudo obtener la geometría oficial LECB E. Se aplicará la aproximación geométrica.")
 
@@ -1338,15 +1902,6 @@ def main():
     raw_country_map = build_country_region_map(airports_csv_path)
     country_region_map = build_country_region_map_from_index(airport_index, prefix_region_map, raw_country_map)
     world_geojson = load_world_geojson(Path(args.world_geojson)) if args.world_geojson else None
-
-    opensky_auth = None
-    tracks_dir = None
-    if args.opensky_user and args.opensky_password:
-        opensky_auth = (args.opensky_user, args.opensky_password)
-        tracks_dir = Path(args.tracks_dir) if args.tracks_dir else Path("opensky_tracks")
-        tracks_dir.mkdir(parents=True, exist_ok=True)
-    track_margin_seconds = max(int(args.track_margin_minutes), 0) * 60
-    track_stats = {"attempted": 0, "success": 0, "cached": 0}
 
     resolved = {}
     resolution_errors = {}
@@ -1405,7 +1960,7 @@ def main():
         except Exception as exc:
             resolution_errors[code] = str(exc)
 
-    def register_flow(category_key, entry_pt, bearing_deg, segment_length_nm):
+    def register_flow(category_key, entry_pt, bearing_deg, segment_length_nm, origin_macro=None, dest_macro=None):
         collection = flow_samples.get(category_key)
         if collection is None:
             return
@@ -1413,6 +1968,8 @@ def main():
             "entry": entry_pt,
             "bearing": bearing_deg % 360.0,
             "length": segment_length_nm,
+            "origin_macro": origin_macro,
+            "dest_macro": dest_macro,
         })
 
     # Construir rutas con coordenadas
@@ -1449,27 +2006,9 @@ def main():
         except (TypeError, ValueError):
             raw_cross_len = float("nan")
 
-        track_path = None
         track_source = "Interpolación geodésica"
-        entry_dt = combine_date_time(row.get("Date"), row.get("Entry time"))
-        track_ts = int(entry_dt.timestamp()) if entry_dt else None
-        callsign = row.get("Call Sign") or row.get("CallSign")
-        if opensky_auth and tracks_dir and track_ts is not None and callsign:
-            sanitized_call = sanitize_callsign(callsign)
-            if sanitized_call:
-                track_stats["attempted"] += 1
-                track_data, cached_track = fetch_opensky_track(sanitized_call, track_ts, opensky_auth, tracks_dir)
-                if track_data:
-                    track_points = extract_track_points(track_data, track_ts, track_margin_seconds)
-                    if track_points and len(track_points) >= 2:
-                        track_path = track_points
-                        track_source = "OpenSky (cache)" if cached_track else "OpenSky"
-                        track_stats["success"] += 1
-                        if cached_track:
-                            track_stats["cached"] += 1
-
-        dense_points = None if track_path else great_circle_points(lat_o, lon_o, lat_d, lon_d, max(args.route_samples, 8))
-        full_path = track_path if track_path else (dense_points if dense_points else [(lat_o, lon_o), (lat_d, lon_d)])
+        dense_points = great_circle_points(lat_o, lon_o, lat_d, lon_d, max(args.route_samples, 8))
+        full_path = dense_points if dense_points else [(lat_o, lon_o), (lat_d, lon_d)]
 
         entry_point = None
         exit_point = None
@@ -1561,8 +2100,10 @@ def main():
             flow_bearing = initial_bearing(flow_entry_pt[0], flow_entry_pt[1], flow_second_pt[0], flow_second_pt[1])
             flow_segment_len = haversine_nm(flow_entry_pt[0], flow_entry_pt[1], flow_second_pt[0], flow_second_pt[1])
             if flow_segment_len > 0:
-                register_flow("all", flow_entry_pt, flow_bearing, flow_segment_len)
-                register_flow(altitude_category, flow_entry_pt, flow_bearing, flow_segment_len)
+                origin_macro = macro_region(o)
+                dest_macro = macro_region(d)
+                register_flow("all", flow_entry_pt, flow_bearing, flow_segment_len, origin_macro, dest_macro)
+                register_flow(altitude_category, flow_entry_pt, flow_bearing, flow_segment_len, origin_macro, dest_macro)
 
         tooltip_text = f"{o} → {d} ({altitude_label})"
         popup_html = f"{name_o} → {name_d}<br>Trayecto total: {total_nm:.1f} NM"
@@ -1629,38 +2170,60 @@ def main():
 
     panel_series = pd.Series(panel_counts).sort_values(ascending=False)
     sector_layer = None
-    tma_features = []
-    if TMA_DEFINITIONS:
-        for tma in TMA_DEFINITIONS:
-            icao = tma.get("icao")
-            if not icao:
-                continue
-            rec = fetch_airport_by_code(icao, airport_index)
-            if not rec:
-                continue
-            lat = rec.get("latitude")
-            lon = rec.get("longitude")
-            if lat is None or lon is None:
-                continue
-            lat = float(lat)
-            lon = float(lon)
-            if sector_polygons and not point_in_any_polygon(lat, lon, sector_polygons):
-                continue
-            radius_nm = float(tma.get("radius_nm", 25.0))
-            ring = circle_polygon(lat, lon, radius_nm, segments=96)
-            if not ring:
-                continue
-            coords = [[pt_lon, pt_lat] for pt_lat, pt_lon in ring]
-            props = {
-                "name": tma.get("name") or icao,
-                "icao": icao,
-                "radius_nm": radius_nm,
+    tma_shapes = []
+
+    if args.tma_geojson:
+        custom_tma_features = load_custom_geojson(Path(args.tma_geojson))
+        if custom_tma_features:
+            print(f"TMA personalizados cargados desde {args.tma_geojson}: {len(custom_tma_features)} geometrías")
+
+            def extract_latlon_sequences(geometry):
+                sequences = []
+                if not geometry:
+                    return sequences
+                gtype = geometry.get("type")
+                coords = geometry.get("coordinates") or []
+                if gtype == "Polygon":
+                    for ring in coords:
+                        sequences.append([(lat, lon) for lon, lat in ring])
+                elif gtype == "MultiPolygon":
+                    for polygon in coords:
+                        for ring in polygon:
+                            sequences.append([(lat, lon) for lon, lat in ring])
+                return sequences
+
+            for feat in custom_tma_features:
+                geometry = feat.get("geometry") or {}
+                sequences = extract_latlon_sequences(geometry)
+                if not sequences:
+                    continue
+                props = feat.get("properties") or {}
+                name = props.get("name") or props.get("NAME") or props.get("title") or "TMA"
+                source = props.get("source") or Path(args.tma_geojson).name
+                for seq in sequences:
+                    if len(seq) < 2:
+                        continue
+                    if seq[0] != seq[-1]:
+                        seq = seq + [seq[0]]
+                    tma_shapes.append({
+                        "name": name,
+                        "source": source,
+                        "coordinates": seq,
+                    })
+        else:
+            print(f"⚠️ No se pudieron cargar TMA desde {args.tma_geojson}")
+
+    if not tma_shapes and TMA_POLYGONS:
+        tma_shapes = [
+            {
+                "name": item["name"],
+                "source": item.get("source"),
+                "icao": item.get("icao"),
+                "ats_unit": item.get("ats_unit"),
+                "coordinates": item["coordinates"],
             }
-            tma_features.append({
-                "type": "Feature",
-                "properties": props,
-                "geometry": {"type": "Polygon", "coordinates": [coords]},
-            })
+            for item in TMA_POLYGONS
+        ]
 
     # Mapa
     m = folium.Map(location=[43.0, 3.0], zoom_start=4, tiles="CartoDB positron")
@@ -1714,61 +2277,59 @@ def main():
     mc = MarkerCluster(name="Aeropuertos").add_to(m)
 
 
+    boundary_layer = None
     if sector_polygons:
-        multipoly = []
+        if config_info:
+            boundary_color = config_info.get("boundary_color", "#f57c00")
+            boundary_name = f"Contorno {config_info.get('label')}" if config_info.get("label") else "Contorno ACC"
+        else:
+            boundary_color = "#f57c00"
+            boundary_name = "Contorno ACC"
+        boundary_group = folium.FeatureGroup(name=boundary_name, show=True, control=True)
         for poly in sector_polygons:
-            rings = []
-            for ring in poly:
-                rings.append([[lon, lat] for lat, lon in ring])
-            multipoly.append(rings)
-        sector_layer = folium.GeoJson(
-            {
-                "type": "FeatureCollection",
-                "features": [
-                    {
-                        "type": "Feature",
-                        "properties": {"name": "ACC LECB E"},
-                        "geometry": {"type": "MultiPolygon", "coordinates": multipoly},
-                    }
-                ],
-            },
-            style_function=lambda _: {
-                "color": "#ffa000",
-                "weight": 1.5,
-                "fillOpacity": 0.05,
-                "interactive": False,
-            },
-            name="ACC LECB E",
-        )
+            if not poly:
+                continue
+            outer_ring = poly[0]
+            latlon = [[lat, lon] for lat, lon in outer_ring]
+            if len(latlon) < 2:
+                continue
+            folium.PolyLine(
+                latlon,
+                color=boundary_color,
+                weight=2.6,
+                opacity=0.9,
+                dash_array=None,
+                interactive=False,
+            ).add_to(boundary_group)
+        if len(boundary_group._children) > 0:
+            boundary_layer = boundary_group
 
-    if tma_features:
-        tma_layer = folium.FeatureGroup(name="TMAs", show=False)
-        for feat in tma_features:
-            base_color = "#00897b"
-            fill_color = lighten_hex(base_color, 0.6)
-            gj = folium.GeoJson(
-                feat,
-                style_function=lambda _, color=base_color, fill=fill_color: {
-                    "color": color,
-                    "weight": 1.2,
-                    "dashArray": "6,4",
-                    "fillColor": fill,
-                    "fillOpacity": 0.15,
-                },
-                highlight_function=lambda _: {"weight": 2.0, "dashArray": "1", "fillOpacity": 0.25},
-            )
-            folium.features.GeoJsonTooltip(
-                fields=["name", "radius_nm"],
-                aliases=["TMA", "Radio (NM)"],
-                sticky=True,
-            ).add_to(gj)
-            folium.features.GeoJsonPopup(
-                fields=["name", "icao", "radius_nm"],
-                aliases=["TMA", "Aeropuerto", "Radio (NM)"],
-                labels=True,
-            ).add_to(gj)
-            gj.add_to(tma_layer)
-        tma_layer.add_to(m)
+    tma_layer = None
+    if tma_shapes:
+        tma_layer = folium.FeatureGroup(name="TMAs Barcelona/Valencia/Palma", show=False, control=True)
+        for shape in tma_shapes:
+            coords = shape.get("coordinates") or []
+            if not coords or len(coords) < 2:
+                continue
+            tooltip = shape.get("name") or "TMA"
+            popup_parts = [f"<strong>{shape.get('name', 'TMA')}</strong>"]
+            if shape.get("icao"):
+                popup_parts.append(f"ICAO: {shape['icao']}")
+            if shape.get("ats_unit"):
+                popup_parts.append(f"ATS: {shape['ats_unit']}")
+            if shape.get("source"):
+                popup_parts.append(f"Fuente: {shape['source']}")
+            popup_html = "<br>".join(popup_parts)
+            folium.PolyLine(
+                coords,
+                color="#00897b",
+                weight=2.2,
+                opacity=0.9,
+                tooltip=tooltip,
+                popup=folium.Popup(popup_html, max_width=260),
+            ).add_to(tma_layer)
+        if len(tma_layer._children) == 0:
+            tma_layer = None
 
     # Marcadores únicos
     added = set()
@@ -1865,6 +2426,8 @@ def main():
             avg_entry_lat, avg_entry_lon = cluster["entry"]
             avg_bearing_val = cluster["bearing"]
             avg_length = cluster["length"]
+            origin_counts = cluster.get("origin_macro_counts") or Counter()
+            dest_counts = cluster.get("dest_macro_counts") or Counter()
             if sector_centroid:
                 end_lat, end_lon = sector_centroid
             else:
@@ -1877,7 +2440,19 @@ def main():
             tooltip = f"{count} rutas (rumbo {avg_bearing_val:.0f}°)"
             if cluster["spread"] > 0:
                 tooltip += f" (±{cluster['spread']:.0f}°)"
-            popup_html = f"{style['name']}<br>{count} rutas agrupadas<br>Rumbo medio: {avg_bearing_val:.0f}°"
+            origin_top = origin_counts.most_common(1)
+            dest_top = dest_counts.most_common(1)
+            if origin_top:
+                tooltip += f" · Ori: {origin_top[0][0]}"
+            if dest_top:
+                tooltip += f" · Dest: {dest_top[0][0]}"
+            popup_html = (
+                f"{style['name']}<br>"
+                f"{count} rutas agrupadas<br>"
+                f"Rumbo medio: {avg_bearing_val:.0f}°<br>"
+                f"Origen macro: {summarize_macro_counts(origin_counts)}<br>"
+                f"Destino macro: {summarize_macro_counts(dest_counts)}"
+            )
             flow_line = folium.PolyLine(
                 [[avg_entry_lat, avg_entry_lon], [end_lat, end_lon]],
                 color=style["color"],
@@ -1936,6 +2511,26 @@ def main():
         sector_layer.add_child(bring_macro)
         sector_layer.add_to(m)
 
+    if tma_layer is not None:
+        tma_layer.add_to(m)
+
+    if boundary_layer is not None:
+        boundary_template = Template("""
+        {% macro script(this, kwargs) %}
+        var layer = {{this._parent.get_name()}};
+        if (layer && layer.bringToFront){
+            layer.bringToFront();
+            layer.on('add', function(){
+                layer.bringToFront();
+            });
+        }
+        {% endmacro %}
+        """)
+        boundary_macro = MacroElement()
+        boundary_macro._template = boundary_template
+        boundary_layer.add_child(boundary_macro)
+        boundary_layer.add_to(m)
+
     add_region_panel(m, panel_series.to_dict(), {label: panel_colors[label] for label in panel_series.index})
 
     folium.LayerControl(collapsed=True).add_to(m)
@@ -1976,11 +2571,6 @@ def main():
         remaining = len(items) - len(sample)
         if remaining > 0:
             print(f"  ... {remaining} códigos adicionales")
-
-    if opensky_auth and track_stats["attempted"]:
-        print(f"Trayectorias OpenSky obtenidas: {track_stats['success']} de {track_stats['attempted']} (cache: {track_stats['cached']})")
-    elif opensky_auth:
-        print("Trayectorias OpenSky: sin resultados para los vuelos analizados.")
 
     generate_insights(df_original, departures_df, panel_series.to_dict(), args, region_label)
 
